@@ -2,25 +2,25 @@
 هما — ربات هوشمند جستجوی شغل
 Claude AI + Web Search + Telegram
 """
-
+ 
 import os
 import time
 import requests
-
+ 
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 TELEGRAM_TOKEN    = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT_ID  = os.environ["TELEGRAM_CHAT_ID"]
-
+ 
 QUERIES = [
     ("Romania Bucharest welder electrician cook driver jobs foreigners 2025", "romania"),
     ("Azerbaijan Baku engineer IT driver cook jobs foreigners 2025", "azerbaijan"),
     ("Oman Muscat engineer driver cook technician jobs expats 2025", "oman"),
 ]
-
+ 
 SYSTEM = """You are a job search assistant. Search the web and find REAL current job openings.
-
+ 
 For each real job found, output it in EXACTLY this format with no deviation:
-
+ 
 ---JOB---
 CATEGORY: semi
 TITLE: [job title translated to Persian]
@@ -36,15 +36,15 @@ DOCUMENTS: پاسپورت معتبر|گواهی سلامت|مدارک تحصیل
 DEADLINE:
 NOTE: امکان اخذ ویزای کاری
 ---END---
-
+ 
 Set CATEGORY:
 - simple: driver, laborer, cleaner, security, warehouse
 - semi: welder, cook, electrician, painter, hotel staff, mechanic
 - expert: engineer, IT, doctor, teacher, manager, accountant
-
+ 
 IMPORTANT: Output ONLY the job blocks. No other text. Find at least 3-5 real jobs."""
-
-
+ 
+ 
 def find_jobs(query: str, country: str) -> list:
     headers = {
         "x-api-key": ANTHROPIC_API_KEY,
@@ -55,14 +55,35 @@ def find_jobs(query: str, country: str) -> list:
     payload = {
         "model": "claude-haiku-4-5-20251001",
         "max_tokens": 3000,
-        "system": SYSTEM,
         "tools": [{"type": "web_search_20250305", "name": "web_search"}],
         "messages": [{
             "role": "user",
-            "content": f"Search for real job openings now: {query}\nSet COUNTRY field to: {country}\nFind real jobs and output them in the exact format specified."
+            "content": f"""Search the web for real current job openings: {query}
+ 
+After searching, output ONLY job listings using EXACTLY this format for each job:
+ 
+---JOB---
+CATEGORY: [simple or semi or expert]
+TITLE: [job title in Persian]
+LOCATION: [city in Persian], [country in Persian]
+COUNTRY: {country}
+EMPLOYER: [company name]
+CONTRACT: تمام‌وقت
+START: فوری
+SALARY: [salary or توافقی]
+BENEFITS: بیمه درمان|اسکان|وعده غذا
+REQUIREMENTS: [req1 in Persian]|[req2]|[req3]
+DOCUMENTS: پاسپورت معتبر|گواهی سلامت|مدارک تحصیلی
+DEADLINE:
+NOTE: امکان اخذ ویزای کاری
+---END---
+ 
+Categories: simple=driver/laborer/cleaner, semi=welder/cook/electrician/painter, expert=engineer/IT/doctor/teacher
+ 
+Output MINIMUM 3 jobs. Use ONLY the ---JOB--- format above. No other text."""
         }]
     }
-
+ 
     r = requests.post(
         "https://api.anthropic.com/v1/messages",
         headers=headers,
@@ -71,10 +92,10 @@ def find_jobs(query: str, country: str) -> list:
     )
     data = r.json()
     text = "".join(b.get("text","") for b in data.get("content",[]) if b.get("type")=="text")
-    print(f"   📝 پاسخ: {text[:200]}")
+    print(f"   📝 پاسخ: {text[:300]}")
     return parse(text)
-
-
+ 
+ 
 def parse(text: str) -> list:
     jobs = []
     if not text:
@@ -90,45 +111,45 @@ def parse(text: str) -> list:
         if job.get("TITLE"):
             jobs.append(job)
     return jobs
-
-
+ 
+ 
 def telegram_msg(job: dict) -> str:
     cats = {"simple":("🔵","ساده"),"semi":("🟡","نیمه‌تخصصی"),"expert":("🟢","تخصصی")}
     emoji, label = cats.get(job.get("CATEGORY","semi"), ("⚪","سایر"))
     flags = {"azerbaijan":"🇦🇿","romania":"🇷🇴","oman":"🇴🇲"}
     flag = flags.get(job.get("COUNTRY","").lower(),"🌍")
-
+ 
     def b(f):
         return "\n".join(f"▫️ {x.strip()}" for x in job.get(f,"").split("|") if x.strip())
-
+ 
     docs = " | ".join(x.strip() for x in job.get("DOCUMENTS","").split("|") if x.strip())
     ct = job.get("COUNTRY","").replace(" ","_")
-
+ 
     return f"""{emoji} <b>فرصت شغلی | {label}</b>
 {flag} {job.get("TITLE","")}
-
+ 
 ━━━━━━━━━━━━━━━━
 <b>💼 موقعیت</b>
 📍 {job.get("LOCATION","")}
 🏢 {job.get("EMPLOYER","")}
 📄 {job.get("CONTRACT","")}
 🗓 شروع: {job.get("START","")}
-
+ 
 <b>💰 حقوق و مزایا</b>
 💵 حقوق: {job.get("SALARY","")}
 {b("BENEFITS")}
-
+ 
 <b>📋 شرایط</b>
 {b("REQUIREMENTS")}
-
+ 
 <b>📁 مدارک لازم</b>
 {docs}
 ━━━━━━━━━━━━━━━━
 📩 برای ارسال رزومه با <b>مشاورین هما</b> تماس بگیرید
-
+ 
 #هما #فرصت_شغلی #{ct} #{label.replace("‌","")}"""
-
-
+ 
+ 
 def send(text: str) -> bool:
     r = requests.post(
         f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
@@ -136,12 +157,12 @@ def send(text: str) -> bool:
         timeout=10,
     )
     return r.json().get("ok", False)
-
-
+ 
+ 
 def main():
     print("🚀 هما — شروع جستجوی روزانه\n")
     all_jobs = []
-
+ 
     for query, country in QUERIES:
         print(f"🔍 {country}: {query[:50]}...")
         try:
@@ -151,32 +172,32 @@ def main():
         except Exception as e:
             print(f"   ❌ {e}")
         time.sleep(5)
-
+ 
     seen, unique = set(), []
     for j in all_jobs:
         k = j.get("TITLE","") + j.get("EMPLOYER","")
         if k not in seen:
             seen.add(k)
             unique.append(j)
-
+ 
     print(f"\n📋 مجموع: {len(unique)} شغل\n")
-
+ 
     sent = 0
     for job in unique:
         if send(telegram_msg(job)):
             print(f"📤 {job.get('TITLE','')}")
             sent += 1
             time.sleep(1.5)
-
+ 
     send(f"""📊 <b>گزارش روزانه هما</b>
-
+ 
 ✅ {sent} فرصت شغلی معتبر امروز
 🌍 آذربایجان 🇦🇿 | رومانی 🇷🇴 | عمان 🇴🇲
-
+ 
 #هما #گزارش_روزانه""")
-
+ 
     print(f"\n✅ پایان — {sent} شغل ارسال شد")
-
-
+ 
+ 
 if __name__ == "__main__":
     main()
