@@ -46,6 +46,17 @@ NOTE:
 CATEGORY: simple=driver/laborer/cleaner, semi=welder/cook/electrician/painter, expert=engineer/IT/doctor/teacher
 TITLE and LOCATION in Persian. EMPLOYER in English."""
 
+def post_with_retry(url, headers, payload, tries=5):
+    for i in range(tries):
+        r = requests.post(url, headers=headers, json=payload, timeout=120)
+        if r.status_code == 429:
+            wait = 30 * (i + 1)
+            print(f"   ⏳ Rate limited. Waiting {wait}s...")
+            time.sleep(wait)
+            continue
+        return r
+    return r
+
 def find_jobs(query: str, country: str) -> list:
     headers = {
         "x-api-key": ANTHROPIC_API_KEY,
@@ -55,7 +66,7 @@ def find_jobs(query: str, country: str) -> list:
     }
     payload = {
         "model": ANTHROPIC_MODEL,
-        "max_tokens": 2500,
+        "max_tokens": 900,
         "system": SYSTEM,
         "tools": [{"type": "web_search_20250305", "name": "web_search"}],
         "messages": [{
@@ -64,11 +75,10 @@ def find_jobs(query: str, country: str) -> list:
         }]
     }
 
-    r = requests.post(
+    r = post_with_retry(
         "https://api.anthropic.com/v1/messages",
         headers=headers,
-        json=payload,
-        timeout=120,
+        payload=payload,
     )
 
     if r.status_code != 200:
@@ -143,7 +153,7 @@ def main():
             print(f"   ✅ {len(jobs)} شغل")
         except Exception as e:
             print(f"   ❌ {e}")
-        time.sleep(3)
+        time.sleep(20)
 
     seen, unique = set(), []
     for j in all_jobs:
