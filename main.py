@@ -5,6 +5,7 @@ import requests
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 TELEGRAM_TOKEN    = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT_ID  = os.environ["TELEGRAM_CHAT_ID"]
+ANTHROPIC_MODEL   = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
 
 QUERIES = [
     ("site:ejobs.ro (welder OR sudor OR electrician OR cook OR driver) Bucuresti", "romania"),
@@ -53,7 +54,7 @@ def find_jobs(query: str, country: str) -> list:
         "anthropic-beta": "web-search-2025-03-05",
     }
     payload = {
-        "model": "claude-haiku-4-5-20251001",
+        "model": ANTHROPIC_MODEL,
         "max_tokens": 2500,
         "system": SYSTEM,
         "tools": [{"type": "web_search_20250305", "name": "web_search"}],
