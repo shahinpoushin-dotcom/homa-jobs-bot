@@ -5,23 +5,47 @@ Claude AI + Web Search + Telegram
 
 import os
 import time
-import json
 import requests
 
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 TELEGRAM_TOKEN    = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT_ID  = os.environ["TELEGRAM_CHAT_ID"]
 
-SEARCHES = [
-    "Romania Bucharest jobs hiring foreigners welder electrician construction cook 2025",
-    "Romania jobs work permit non-EU workers 2025 driver painter warehouse",
-    "Azerbaijan Baku job vacancies 2025 engineer IT welder driver cook hospitality",
-    "Azerbaijan Baku jobs hiring foreigners 2025 work permit",
-    "Oman Muscat job vacancies 2025 engineer technician driver cook hospitality",
-    "Oman jobs hiring expats 2025 welder electrician construction driver",
+QUERIES = [
+    ("Romania Bucharest welder electrician cook driver jobs foreigners 2025", "romania"),
+    ("Azerbaijan Baku engineer IT driver cook jobs foreigners 2025", "azerbaijan"),
+    ("Oman Muscat engineer driver cook technician jobs expats 2025", "oman"),
 ]
 
-def call_claude(messages, system="", use_search=False, max_tokens=2000):
+SYSTEM = """You are a job search assistant. Search the web and find REAL current job openings.
+
+For each real job found, output it in EXACTLY this format with no deviation:
+
+---JOB---
+CATEGORY: semi
+TITLE: [job title translated to Persian]
+LOCATION: [city in Persian], [country in Persian]
+COUNTRY: [azerbaijan or romania or oman]
+EMPLOYER: [company name in English]
+CONTRACT: تمام‌وقت
+START: فوری
+SALARY: [salary with currency, or توافقی]
+BENEFITS: بیمه درمان|اسکان یا کمک اجاره|وعده غذا
+REQUIREMENTS: [requirement 1 in Persian]|[requirement 2]|[requirement 3]
+DOCUMENTS: پاسپورت معتبر|گواهی سلامت|مدارک تحصیلی
+DEADLINE:
+NOTE: امکان اخذ ویزای کاری
+---END---
+
+Set CATEGORY:
+- simple: driver, laborer, cleaner, security, warehouse
+- semi: welder, cook, electrician, painter, hotel staff, mechanic
+- expert: engineer, IT, doctor, teacher, manager, accountant
+
+IMPORTANT: Output ONLY the job blocks. No other text. Find at least 3-5 real jobs."""
+
+
+def find_jobs(query: str, country: str) -> list:
     headers = {
         "x-api-key": ANTHROPIC_API_KEY,
         "anthropic-version": "2023-06-01",
@@ -30,76 +54,30 @@ def call_claude(messages, system="", use_search=False, max_tokens=2000):
     }
     payload = {
         "model": "claude-haiku-4-5-20251001",
-        "max_tokens": max_tokens,
-        "messages": messages,
+        "max_tokens": 3000,
+        "system": SYSTEM,
+        "tools": [{"type": "web_search_20250305", "name": "web_search"}],
+        "messages": [{
+            "role": "user",
+            "content": f"Search for real job openings now: {query}\nSet COUNTRY field to: {country}\nFind real jobs and output them in the exact format specified."
+        }]
     }
-    if system:
-        payload["system"] = system
-    if use_search:
-        payload["tools"] = [{"type": "web_search_20250305", "name": "web_search"}]
 
     r = requests.post(
         "https://api.anthropic.com/v1/messages",
         headers=headers,
         json=payload,
-        timeout=60,
+        timeout=90,
     )
     data = r.json()
-    text = ""
-    for block in data.get("content", []):
-        if block.get("type") == "text":
-            text += block.get("text", "")
-    return text
+    text = "".join(b.get("text","") for b in data.get("content",[]) if b.get("type")=="text")
+    print(f"   📝 پاسخ: {text[:200]}")
+    return parse(text)
 
 
-def search_jobs(query: str) -> str:
-    """مرحله ۱: جستجوی شغل"""
-    return call_claude(
-        messages=[{"role": "user", "content": f"Search for real job openings: {query}. List job title, company name, location, salary, and requirements for each job found."}],
-        use_search=True,
-        max_tokens=2000,
-    )
-
-
-def format_jobs(search_result: str, country: str) -> str:
-    """مرحله ۲: فرمت‌کردن نتایج"""
-    system = """You extract job listings from text and format them strictly.
-For each job found, output EXACTLY:
-
----JOB---
-CATEGORY: simple
-TITLE: [job title in Persian]
-LOCATION: [city, country in Persian]
-COUNTRY: """ + country + """
-EMPLOYER: [company name]
-CONTRACT: تمام‌وقت
-START: فوری
-SALARY: [salary or توافقی]
-BENEFITS: بیمه درمان|اسکان|وعده غذا
-REQUIREMENTS: [main requirement 1|requirement 2|requirement 3]
-DOCUMENTS: پاسپورت معتبر|گواهی سلامت|مدارک تحصیلی
-DEADLINE:
-NOTE: برای اطلاعات بیشتر با هما تماس بگیرید
----END---
-
-Set CATEGORY based on job type:
-- simple: driver, laborer, cleaner, warehouse worker
-- semi: welder, cook, electrician, painter, hotel staff
-- expert: engineer, IT, doctor, teacher, manager
-
-Output ONLY the formatted jobs. If no jobs in the text, output: NO_JOBS_FOUND"""
-
-    return call_claude(
-        messages=[{"role": "user", "content": f"Extract and format all jobs from this text:\n\n{search_result}"}],
-        system=system,
-        use_search=False,
-        max_tokens=2000,
-    )
-
-
-def parse_jobs(text: str) -> list:
+def parse(text: str) -> list:
     jobs = []
-    if not text or "NO_JOBS_FOUND" in text:
+    if not text:
         return jobs
     for section in text.split("---JOB---")[1:]:
         if "---END---" not in section:
@@ -114,20 +92,17 @@ def parse_jobs(text: str) -> list:
     return jobs
 
 
-def format_telegram(job: dict) -> str:
-    cat_map = {
-        "simple": ("🔵", "ساده"),
-        "semi":   ("🟡", "نیمه‌تخصصی"),
-        "expert": ("🟢", "تخصصی"),
-    }
-    emoji, label = cat_map.get(job.get("CATEGORY", "semi"), ("⚪", "سایر"))
-    flags = {"azerbaijan": "🇦🇿", "romania": "🇷🇴", "oman": "🇴🇲"}
-    flag = flags.get(job.get("COUNTRY", "").lower(), "🌍")
+def telegram_msg(job: dict) -> str:
+    cats = {"simple":("🔵","ساده"),"semi":("🟡","نیمه‌تخصصی"),"expert":("🟢","تخصصی")}
+    emoji, label = cats.get(job.get("CATEGORY","semi"), ("⚪","سایر"))
+    flags = {"azerbaijan":"🇦🇿","romania":"🇷🇴","oman":"🇴🇲"}
+    flag = flags.get(job.get("COUNTRY","").lower(),"🌍")
 
-    def bullets(f):
+    def b(f):
         return "\n".join(f"▫️ {x.strip()}" for x in job.get(f,"").split("|") if x.strip())
 
     docs = " | ".join(x.strip() for x in job.get("DOCUMENTS","").split("|") if x.strip())
+    ct = job.get("COUNTRY","").replace(" ","_")
 
     return f"""{emoji} <b>فرصت شغلی | {label}</b>
 {flag} {job.get("TITLE","")}
@@ -141,71 +116,59 @@ def format_telegram(job: dict) -> str:
 
 <b>💰 حقوق و مزایا</b>
 💵 حقوق: {job.get("SALARY","")}
-{bullets("BENEFITS")}
+{b("BENEFITS")}
 
 <b>📋 شرایط</b>
-{bullets("REQUIREMENTS")}
+{b("REQUIREMENTS")}
 
 <b>📁 مدارک لازم</b>
 {docs}
 ━━━━━━━━━━━━━━━━
 📩 برای ارسال رزومه با <b>مشاورین هما</b> تماس بگیرید
 
-#هما #فرصت_شغلی #{job.get("COUNTRY","").replace(" ","_")} #{label.replace("‌","")}"""
+#هما #فرصت_شغلی #{ct} #{label.replace("‌","")}"""
 
 
-def send_telegram(text: str) -> bool:
+def send(text: str) -> bool:
     r = requests.post(
         f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-        json={"chat_id": TELEGRAM_CHAT_ID, "text": text,
-              "parse_mode": "HTML", "disable_web_page_preview": True},
+        json={"chat_id":TELEGRAM_CHAT_ID,"text":text,"parse_mode":"HTML","disable_web_page_preview":True},
         timeout=10,
     )
     return r.json().get("ok", False)
-
-
-COUNTRY_MAP = {
-    "Romania": "romania",
-    "Azerbaijan": "azerbaijan",
-    "Oman": "oman",
-}
 
 
 def main():
     print("🚀 هما — شروع جستجوی روزانه\n")
     all_jobs = []
 
-    for query in SEARCHES:
-        country = next((v for k, v in COUNTRY_MAP.items() if k in query), "azerbaijan")
-        print(f"🔍 جستجو: {query[:50]}...")
+    for query, country in QUERIES:
+        print(f"🔍 {country}: {query[:50]}...")
         try:
-            raw = search_jobs(query)
-            print(f"   📝 {len(raw)} کاراکتر پیدا شد")
-            formatted = format_jobs(raw, country)
-            jobs = parse_jobs(formatted)
+            jobs = find_jobs(query, country)
             all_jobs.extend(jobs)
-            print(f"   ✅ {len(jobs)} شغل استخراج شد")
+            print(f"   ✅ {len(jobs)} شغل")
         except Exception as e:
-            print(f"   ❌ خطا: {e}")
+            print(f"   ❌ {e}")
         time.sleep(5)
 
     seen, unique = set(), []
     for j in all_jobs:
-        key = j.get("TITLE","") + j.get("EMPLOYER","")
-        if key not in seen:
-            seen.add(key)
+        k = j.get("TITLE","") + j.get("EMPLOYER","")
+        if k not in seen:
+            seen.add(k)
             unique.append(j)
 
     print(f"\n📋 مجموع: {len(unique)} شغل\n")
 
     sent = 0
     for job in unique:
-        if send_telegram(format_telegram(job)):
+        if send(telegram_msg(job)):
             print(f"📤 {job.get('TITLE','')}")
             sent += 1
             time.sleep(1.5)
 
-    send_telegram(f"""📊 <b>گزارش روزانه هما</b>
+    send(f"""📊 <b>گزارش روزانه هما</b>
 
 ✅ {sent} فرصت شغلی معتبر امروز
 🌍 آذربایجان 🇦🇿 | رومانی 🇷🇴 | عمان 🇴🇲
