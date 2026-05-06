@@ -13,9 +13,12 @@ TELEGRAM_TOKEN    = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT_ID  = os.environ["TELEGRAM_CHAT_ID"]
 
 SEARCHES = [
-    "current job vacancies Romania 2025 foreign workers welder electrician cook driver construction",
-    "Azerbaijan Baku jobs 2025 foreign workers engineer IT hospitality driver",
-    "Oman Muscat job vacancies 2025 foreign workers engineer technician cook driver",
+    "Romania Bucharest jobs hiring foreigners welder electrician construction cook 2025",
+    "Romania jobs work permit non-EU workers 2025 driver painter warehouse",
+    "Azerbaijan Baku job vacancies 2025 engineer IT welder driver cook hospitality",
+    "Azerbaijan Baku jobs hiring foreigners 2025 work permit",
+    "Oman Muscat job vacancies 2025 engineer technician driver cook hospitality",
+    "Oman jobs hiring expats 2025 welder electrician construction driver",
 ]
 
 def call_claude(messages, system="", use_search=False, max_tokens=2000):
@@ -162,9 +165,9 @@ def send_telegram(text: str) -> bool:
 
 
 COUNTRY_MAP = {
-    "current job vacancies Romania": "romania",
-    "Azerbaijan Baku jobs": "azerbaijan",
-    "Oman Muscat job": "oman",
+    "Romania": "romania",
+    "Azerbaijan": "azerbaijan",
+    "Oman": "oman",
 }
 
 
@@ -173,7 +176,7 @@ def main():
     all_jobs = []
 
     for query in SEARCHES:
-        country = next((v for k, v in COUNTRY_MAP.items() if k in query), "")
+        country = next((v for k, v in COUNTRY_MAP.items() if k in query), "azerbaijan")
         print(f"🔍 جستجو: {query[:50]}...")
         try:
             raw = search_jobs(query)
