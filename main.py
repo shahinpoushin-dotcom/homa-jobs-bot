@@ -1,14 +1,15 @@
 """
 هما — ربات هوشمند جستجوی شغل
-Gemini AI + Google Search + Telegram
+Google Search + Gemini AI + Telegram
 """
 
 import os
 import time
 import requests
 import google.generativeai as genai
+from googlesearch import search
 
-# ─── تنظیمات از Environment Variables ─────────────────
+# ─── تنظیمات ──────────────────────────────────────────
 GEMINI_API_KEY   = os.environ["GEMINI_API_KEY"]
 TELEGRAM_TOKEN   = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
@@ -17,22 +18,22 @@ TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 genai.configure(api_key=GEMINI_API_KEY)
 
 SEARCHES = [
-    "jobs Azerbaijan Baku visa sponsorship welder electrician engineer driver cook 2025",
-    "Romania jobs foreigners work permit welder construction driver electrician painter 2025",
-    "Oman Muscat jobs visa sponsorship engineer driver welder hospitality cook technician 2025",
-    "Azerbaijan Baku hiring foreign workers permit IT programmer teacher 2025",
-    "Romania ejobs bestjobs foreign workers visa sponsorship 2025",
-    "Oman bayt naukrigulf jobs iranians visa work permit 2025",
+    "jobs Azerbaijan Baku visa sponsorship welder electrician engineer 2025",
+    "jobs Azerbaijan Baku hiring foreigners work permit driver cook 2025",
+    "Romania jobs foreigners work permit welder construction electrician 2025",
+    "Romania ejobs bestjobs foreign workers visa 2025",
+    "Oman Muscat jobs visa sponsorship engineer driver welder cook 2025",
+    "Oman bayt naukrigulf jobs visa work permit 2025",
 ]
 
 SYSTEM_PROMPT = """
 تو دستیار هما هستی — شرکت مشاوره مهاجرت و کاریابی برای ایرانیان.
 
-وظیفه‌ات: از نتایج جستجو، آگهی‌های شغلی واقعی را که:
-۱. ویزا یا کار پرمیت می‌دهند
+بر اساس لینک‌ها و اطلاعات جستجو، آگهی‌های شغلی واقعی را که:
+۱. ویزا یا کار پرمیت می‌دهند (visa sponsorship / work permit)
 ۲. برای ایرانیان امکان‌پذیر است
 ۳. اطلاعات کافی دارند
-شناسایی کن.
+شناسایی و استخراج کن.
 
 برای هر شغل دقیقاً با این فرمت بنویس:
 
@@ -44,12 +45,12 @@ COUNTRY: [azerbaijan یا romania یا oman]
 EMPLOYER: [نام شرکت]
 CONTRACT: [نوع قرارداد]
 START: [زمان شروع]
-SALARY: [حقوق]
+SALARY: [حقوق یا «توافقی»]
 BENEFITS: [مزیت۱|مزیت۲|مزیت۳]
 REQUIREMENTS: [شرط۱|شرط۲|شرط۳]
-DOCUMENTS: [مدرک۱|مدرک۲|مدرک۳]
-DEADLINE: [ساعت یا خالی]
-NOTE: [نکته مهم یا خالی]
+DOCUMENTS: [پاسپورت معتبر|گواهی سلامت|مدارک تحصیلی]
+DEADLINE: []
+NOTE: [نکته مهم]
 ---END---
 
 دسته‌بندی:
@@ -57,21 +58,36 @@ NOTE: [نکته مهم یا خالی]
 - semi = جوشکار، برق‌کار، آشپز، هتل‌داری، نقاش
 - expert = مهندس، IT، معلم، پزشک
 
-اگر هیچ آگهی معتبری نبود بنویس: NO_JOBS_FOUND
-فقط آگهی‌های واقعی با ویزا اسپانسرشیپ صریح را بنویس.
+اگر هیچ آگهی معتبری نبود فقط بنویس: NO_JOBS_FOUND
 """
 
 
-def search_jobs(query: str) -> str:
-    """جستجو با Gemini + Google Search"""
+def get_search_snippets(query: str) -> str:
+    """جستجوی Google و استخراج نتایج"""
+    snippets = []
+    try:
+        results = search(query, num_results=8, lang="en", sleep_interval=2)
+        for url in results:
+            snippets.append(url)
+    except Exception as e:
+        print(f"   خطای جستجو: {e}")
+    return "\n".join(snippets)
+
+
+def analyze_with_gemini(query: str, urls: str) -> str:
+    """تحلیل نتایج با Gemini"""
     model = genai.GenerativeModel(
         model_name="gemini-2.0-flash",
-        tools="google_search_retrieval",
         system_instruction=SYSTEM_PROMPT,
     )
-    response = model.generate_content(
-        f"جستجو کن و آگهی‌های معتبر پیدا کن:\n{query}"
-    )
+    prompt = f"""جستجو برای: {query}
+
+لینک‌های پیدا شده:
+{urls}
+
+بر اساس این لینک‌ها و دانش خودت از سایت‌های کاریابی این کشورها، آگهی‌های شغلی واقعی با ویزا اسپانسرشیپ رو استخراج کن."""
+
+    response = model.generate_content(prompt)
     return response.text
 
 
@@ -109,25 +125,33 @@ def format_message(job: dict) -> str:
     flag = flags.get(job.get("COUNTRY", "").lower(), "🌍")
 
     def bullet_list(field):
-        return "\n".join(f"▫️ {x.strip()}" for x in job.get(field,"").split("|") if x.strip())
+        return "\n".join(
+            f"▫️ {x.strip()}"
+            for x in job.get(field, "").split("|") if x.strip()
+        )
 
-    docs = " | ".join(x.strip() for x in job.get("DOCUMENTS","").split("|") if x.strip())
-    deadline = f"\n⏰ <b>این فرصت فقط {job['DEADLINE']} ساعت معتبر است</b>" if job.get("DEADLINE") else ""
+    docs = " | ".join(
+        x.strip() for x in job.get("DOCUMENTS", "").split("|") if x.strip()
+    )
+    deadline = (
+        f"\n⏰ <b>این فرصت فقط {job['DEADLINE']} ساعت معتبر است</b>"
+        if job.get("DEADLINE") else ""
+    )
     note = f"\n\n📌 {job['NOTE']}" if job.get("NOTE") else ""
-    country_tag = job.get("COUNTRY","").replace(" ","_")
+    country_tag = job.get("COUNTRY", "").replace(" ", "_")
 
     return f"""{emoji} <b>فرصت شغلی | {label}</b>
-{flag} {job.get("TITLE","")}
+{flag} {job.get("TITLE", "")}
 
 ━━━━━━━━━━━━━━━━
 <b>💼 موقعیت</b>
-📍 {job.get("LOCATION","")}
-🏢 {job.get("EMPLOYER","")}
-📄 {job.get("CONTRACT","")}
-🗓 شروع: {job.get("START","")}
+📍 {job.get("LOCATION", "")}
+🏢 {job.get("EMPLOYER", "")}
+📄 {job.get("CONTRACT", "")}
+🗓 شروع: {job.get("START", "")}
 
 <b>💰 حقوق و مزایا</b>
-💵 حقوق: {job.get("SALARY","")}
+💵 حقوق: {job.get("SALARY", "")}
 {bullet_list("BENEFITS")}
 
 <b>📋 شرایط</b>
@@ -138,16 +162,20 @@ def format_message(job: dict) -> str:
 ━━━━━━━━━━━━━━━━{deadline}
 📩 برای ارسال رزومه با <b>مشاورین هما</b> تماس بگیرید{note}
 
-#هما #فرصت_شغلی #{country_tag} #{label.replace("‌","")}"""
+#هما #فرصت_شغلی #{country_tag} #{label.replace("‌", "")}"""
 
 
 def send_telegram(text: str) -> bool:
     """ارسال به تلگرام"""
     r = requests.post(
         f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-        json={"chat_id": TELEGRAM_CHAT_ID, "text": text,
-              "parse_mode": "HTML", "disable_web_page_preview": True},
-        timeout=10
+        json={
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        },
+        timeout=10,
     )
     return r.json().get("ok", False)
 
@@ -157,20 +185,22 @@ def main():
     all_jobs = []
 
     for query in SEARCHES:
-        print(f"🔍 {query[:55]}...")
+        print(f"🔍 {query[:60]}...")
         try:
-            result = search_jobs(query)
+            urls = get_search_snippets(query)
+            print(f"   📎 {len(urls.splitlines())} لینک پیدا شد")
+            result = analyze_with_gemini(query, urls)
             jobs = parse_jobs(result)
             all_jobs.extend(jobs)
-            print(f"   ✅ {len(jobs)} شغل پیدا شد")
+            print(f"   ✅ {len(jobs)} شغل استخراج شد")
         except Exception as e:
             print(f"   ❌ خطا: {e}")
-        time.sleep(3)
+        time.sleep(4)
 
     # حذف تکراری
     seen, unique = set(), []
     for j in all_jobs:
-        key = j.get("TITLE","") + j.get("LOCATION","")
+        key = j.get("TITLE", "") + j.get("LOCATION", "")
         if key not in seen:
             seen.add(key)
             unique.append(j)
@@ -181,11 +211,10 @@ def main():
     for job in unique:
         msg = format_message(job)
         if send_telegram(msg):
-            print(f"📤 ارسال: {job.get('TITLE','')}")
+            print(f"📤 ارسال: {job.get('TITLE', '')}")
             sent += 1
             time.sleep(1.5)
 
-    # گزارش نهایی
     send_telegram(f"""📊 <b>گزارش روزانه هما</b>
 
 ✅ {sent} فرصت شغلی معتبر امروز
