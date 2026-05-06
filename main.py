@@ -1,35 +1,32 @@
 """
 هما — ربات هوشمند جستجوی شغل
-Google Search + Gemini AI + Telegram
+Claude AI + Web Search + Telegram
 """
 
 import os
 import time
+import json
 import requests
-import google.generativeai as genai
-from googlesearch import search
 
 # ─── تنظیمات ──────────────────────────────────────────
-GEMINI_API_KEY   = os.environ["GEMINI_API_KEY"]
-TELEGRAM_TOKEN   = os.environ["TELEGRAM_TOKEN"]
-TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
+ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
+TELEGRAM_TOKEN    = os.environ["TELEGRAM_TOKEN"]
+TELEGRAM_CHAT_ID  = os.environ["TELEGRAM_CHAT_ID"]
 # ──────────────────────────────────────────────────────
 
-genai.configure(api_key=GEMINI_API_KEY)
-
 SEARCHES = [
-    "jobs Azerbaijan Baku visa sponsorship welder electrician engineer 2025",
-    "jobs Azerbaijan Baku hiring foreigners work permit driver cook 2025",
-    "Romania jobs foreigners work permit welder construction electrician 2025",
-    "Romania ejobs bestjobs foreign workers visa 2025",
-    "Oman Muscat jobs visa sponsorship engineer driver welder cook 2025",
-    "Oman bayt naukrigulf jobs visa work permit 2025",
+    "jobs Azerbaijan Baku visa sponsorship welder electrician engineer driver cook 2025",
+    "jobs Azerbaijan Baku hiring foreigners work permit IT programmer teacher 2025",
+    "Romania jobs foreigners work permit welder construction electrician painter cook 2025",
+    "Romania ejobs bestjobs foreign workers visa sponsorship 2025",
+    "Oman Muscat jobs visa sponsorship engineer driver welder hospitality cook 2025",
+    "Oman bayt naukrigulf jobs iranians visa work permit 2025",
 ]
 
 SYSTEM_PROMPT = """
 تو دستیار هما هستی — شرکت مشاوره مهاجرت و کاریابی برای ایرانیان.
 
-بر اساس لینک‌ها و اطلاعات جستجو، آگهی‌های شغلی واقعی را که:
+وظیفه‌ات: جستجو کن و آگهی‌های شغلی واقعی را که:
 ۱. ویزا یا کار پرمیت می‌دهند (visa sponsorship / work permit)
 ۲. برای ایرانیان امکان‌پذیر است
 ۳. اطلاعات کافی دارند
@@ -45,12 +42,12 @@ COUNTRY: [azerbaijan یا romania یا oman]
 EMPLOYER: [نام شرکت]
 CONTRACT: [نوع قرارداد]
 START: [زمان شروع]
-SALARY: [حقوق یا «توافقی»]
+SALARY: [حقوق یا توافقی]
 BENEFITS: [مزیت۱|مزیت۲|مزیت۳]
 REQUIREMENTS: [شرط۱|شرط۲|شرط۳]
 DOCUMENTS: [پاسپورت معتبر|گواهی سلامت|مدارک تحصیلی]
 DEADLINE: []
-NOTE: [نکته مهم]
+NOTE: [نکته مهم یا خالی]
 ---END---
 
 دسته‌بندی:
@@ -58,37 +55,47 @@ NOTE: [نکته مهم]
 - semi = جوشکار، برق‌کار، آشپز، هتل‌داری، نقاش
 - expert = مهندس، IT، معلم، پزشک
 
+فقط آگهی‌های واقعی با ویزا اسپانسرشیپ صریح بنویس.
 اگر هیچ آگهی معتبری نبود فقط بنویس: NO_JOBS_FOUND
 """
 
 
-def get_search_snippets(query: str) -> str:
-    """جستجوی Google و استخراج نتایج"""
-    snippets = []
-    try:
-        results = search(query, num_results=8, lang="en", sleep_interval=2)
-        for url in results:
-            snippets.append(url)
-    except Exception as e:
-        print(f"   خطای جستجو: {e}")
-    return "\n".join(snippets)
+def search_jobs_with_claude(query: str) -> str:
+    """جستجو با Claude API + Web Search"""
+    headers = {
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        "anthropic-beta": "web-search-2025-03-05",
+    }
 
+    payload = {
+        "model": "claude-haiku-4-5-20251001",
+        "max_tokens": 2000,
+        "system": SYSTEM_PROMPT,
+        "tools": [{"type": "web_search_20250305", "name": "web_search"}],
+        "messages": [
+            {
+                "role": "user",
+                "content": f"جستجو کن و آگهی‌های شغلی معتبر با ویزا اسپانسرشیپ پیدا کن:\n{query}"
+            }
+        ],
+    }
 
-def analyze_with_gemini(query: str, urls: str) -> str:
-    """تحلیل نتایج با Gemini"""
-    model = genai.GenerativeModel(
-        model_name="gemini-2.0-flash",
-        system_instruction=SYSTEM_PROMPT,
+    r = requests.post(
+        "https://api.anthropic.com/v1/messages",
+        headers=headers,
+        json=payload,
+        timeout=60,
     )
-    prompt = f"""جستجو برای: {query}
 
-لینک‌های پیدا شده:
-{urls}
+    data = r.json()
+    full_text = ""
+    for block in data.get("content", []):
+        if block.get("type") == "text":
+            full_text += block.get("text", "")
 
-بر اساس این لینک‌ها و دانش خودت از سایت‌های کاریابی این کشورها، آگهی‌های شغلی واقعی با ویزا اسپانسرشیپ رو استخراج کن."""
-
-    response = model.generate_content(prompt)
-    return response.text
+    return full_text
 
 
 def parse_jobs(text: str) -> list:
@@ -187,15 +194,13 @@ def main():
     for query in SEARCHES:
         print(f"🔍 {query[:60]}...")
         try:
-            urls = get_search_snippets(query)
-            print(f"   📎 {len(urls.splitlines())} لینک پیدا شد")
-            result = analyze_with_gemini(query, urls)
+            result = search_jobs_with_claude(query)
             jobs = parse_jobs(result)
             all_jobs.extend(jobs)
-            print(f"   ✅ {len(jobs)} شغل استخراج شد")
+            print(f"   ✅ {len(jobs)} شغل پیدا شد")
         except Exception as e:
             print(f"   ❌ خطا: {e}")
-        time.sleep(4)
+        time.sleep(3)
 
     # حذف تکراری
     seen, unique = set(), []
