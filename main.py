@@ -2,103 +2,99 @@
 هما — ربات هوشمند جستجوی شغل
 Claude AI + Web Search + Telegram
 """
- 
+
 import os
 import time
 import json
 import requests
- 
-# ─── تنظیمات ──────────────────────────────────────────
+
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 TELEGRAM_TOKEN    = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT_ID  = os.environ["TELEGRAM_CHAT_ID"]
-# ──────────────────────────────────────────────────────
- 
+
 SEARCHES = [
-    "jobs Azerbaijan Baku visa sponsorship welder electrician engineer driver cook 2025",
-    "jobs Azerbaijan Baku hiring foreigners work permit IT programmer teacher 2025",
-    "Romania jobs foreigners work permit welder construction electrician painter cook 2025",
-    "Romania ejobs bestjobs foreign workers visa sponsorship 2025",
-    "Oman Muscat jobs visa sponsorship engineer driver welder hospitality cook 2025",
-    "Oman bayt naukrigulf jobs iranians visa work permit 2025",
+    "current job vacancies Romania 2025 foreign workers welder electrician cook driver construction",
+    "Azerbaijan Baku jobs 2025 foreign workers engineer IT hospitality driver",
+    "Oman Muscat job vacancies 2025 foreign workers engineer technician cook driver",
 ]
- 
-SYSTEM_PROMPT = """
-You are a job finder assistant for Homa, an Iranian immigration and job placement company.
- 
-Search for real job listings in Azerbaijan, Romania, and Oman that:
-1. Are open to foreign workers (not just locals)
-2. Have enough information to apply
-3. Are from real companies
- 
-For EACH job found, write EXACTLY in this format:
- 
----JOB---
-CATEGORY: [simple or semi or expert]
-TITLE: [job title in Persian]
-LOCATION: [city, country]
-COUNTRY: [azerbaijan or romania or oman]
-EMPLOYER: [company name]
-CONTRACT: [contract type]
-START: [start date or "فوری"]
-SALARY: [salary or "توافقی"]
-BENEFITS: [benefit1|benefit2|benefit3]
-REQUIREMENTS: [req1|req2|req3]
-DOCUMENTS: [پاسپورت معتبر|گواهی سلامت|مدارک تحصیلی]
-DEADLINE: []
-NOTE: [important note about visa/work permit availability]
----END---
- 
-Categories:
-- simple = driver, laborer, cleaner, warehouse
-- semi = welder, electrician, cook, hospitality, painter
-- expert = engineer, IT, teacher, doctor
- 
-Find at least 3-5 real jobs. Be inclusive - if a company hires foreigners in general, include the job.
-If truly no jobs found: NO_JOBS_FOUND
-"""
- 
- 
-def search_jobs_with_claude(query: str) -> str:
-    """جستجو با Claude API + Web Search"""
+
+def call_claude(messages, system="", use_search=False, max_tokens=2000):
     headers = {
         "x-api-key": ANTHROPIC_API_KEY,
         "anthropic-version": "2023-06-01",
         "content-type": "application/json",
         "anthropic-beta": "web-search-2025-03-05",
     }
- 
     payload = {
         "model": "claude-haiku-4-5-20251001",
-        "max_tokens": 2000,
-        "system": SYSTEM_PROMPT,
-        "tools": [{"type": "web_search_20250305", "name": "web_search"}],
-        "messages": [
-            {
-                "role": "user",
-                "content": f"جستجو کن و آگهی‌های شغلی معتبر با ویزا اسپانسرشیپ پیدا کن:\n{query}"
-            }
-        ],
+        "max_tokens": max_tokens,
+        "messages": messages,
     }
- 
+    if system:
+        payload["system"] = system
+    if use_search:
+        payload["tools"] = [{"type": "web_search_20250305", "name": "web_search"}]
+
     r = requests.post(
         "https://api.anthropic.com/v1/messages",
         headers=headers,
         json=payload,
         timeout=60,
     )
- 
     data = r.json()
-    full_text = ""
+    text = ""
     for block in data.get("content", []):
         if block.get("type") == "text":
-            full_text += block.get("text", "")
- 
-    return full_text
- 
- 
+            text += block.get("text", "")
+    return text
+
+
+def search_jobs(query: str) -> str:
+    """مرحله ۱: جستجوی شغل"""
+    return call_claude(
+        messages=[{"role": "user", "content": f"Search for real job openings: {query}. List job title, company name, location, salary, and requirements for each job found."}],
+        use_search=True,
+        max_tokens=2000,
+    )
+
+
+def format_jobs(search_result: str, country: str) -> str:
+    """مرحله ۲: فرمت‌کردن نتایج"""
+    system = """You extract job listings from text and format them strictly.
+For each job found, output EXACTLY:
+
+---JOB---
+CATEGORY: simple
+TITLE: [job title in Persian]
+LOCATION: [city, country in Persian]
+COUNTRY: """ + country + """
+EMPLOYER: [company name]
+CONTRACT: تمام‌وقت
+START: فوری
+SALARY: [salary or توافقی]
+BENEFITS: بیمه درمان|اسکان|وعده غذا
+REQUIREMENTS: [main requirement 1|requirement 2|requirement 3]
+DOCUMENTS: پاسپورت معتبر|گواهی سلامت|مدارک تحصیلی
+DEADLINE:
+NOTE: برای اطلاعات بیشتر با هما تماس بگیرید
+---END---
+
+Set CATEGORY based on job type:
+- simple: driver, laborer, cleaner, warehouse worker
+- semi: welder, cook, electrician, painter, hotel staff
+- expert: engineer, IT, doctor, teacher, manager
+
+Output ONLY the formatted jobs. If no jobs in the text, output: NO_JOBS_FOUND"""
+
+    return call_claude(
+        messages=[{"role": "user", "content": f"Extract and format all jobs from this text:\n\n{search_result}"}],
+        system=system,
+        use_search=False,
+        max_tokens=2000,
+    )
+
+
 def parse_jobs(text: str) -> list:
-    """استخراج آگهی‌ها از متن"""
     jobs = []
     if not text or "NO_JOBS_FOUND" in text:
         return jobs
@@ -113,121 +109,108 @@ def parse_jobs(text: str) -> list:
         if job.get("TITLE"):
             jobs.append(job)
     return jobs
- 
- 
-def format_message(job: dict) -> str:
-    """فرمت پیام تلگرام"""
+
+
+def format_telegram(job: dict) -> str:
     cat_map = {
         "simple": ("🔵", "ساده"),
         "semi":   ("🟡", "نیمه‌تخصصی"),
         "expert": ("🟢", "تخصصی"),
     }
     emoji, label = cat_map.get(job.get("CATEGORY", "semi"), ("⚪", "سایر"))
- 
-    flags = {
-        "azerbaijan": "🇦🇿", "romania": "🇷🇴", "oman": "🇴🇲",
-        "qatar": "🇶🇦", "turkey": "🇹🇷", "germany": "🇩🇪", "uk": "🇬🇧",
-    }
+    flags = {"azerbaijan": "🇦🇿", "romania": "🇷🇴", "oman": "🇴🇲"}
     flag = flags.get(job.get("COUNTRY", "").lower(), "🌍")
- 
-    def bullet_list(field):
-        return "\n".join(
-            f"▫️ {x.strip()}"
-            for x in job.get(field, "").split("|") if x.strip()
-        )
- 
-    docs = " | ".join(
-        x.strip() for x in job.get("DOCUMENTS", "").split("|") if x.strip()
-    )
-    deadline = (
-        f"\n⏰ <b>این فرصت فقط {job['DEADLINE']} ساعت معتبر است</b>"
-        if job.get("DEADLINE") else ""
-    )
-    note = f"\n\n📌 {job['NOTE']}" if job.get("NOTE") else ""
-    country_tag = job.get("COUNTRY", "").replace(" ", "_")
- 
+
+    def bullets(f):
+        return "\n".join(f"▫️ {x.strip()}" for x in job.get(f,"").split("|") if x.strip())
+
+    docs = " | ".join(x.strip() for x in job.get("DOCUMENTS","").split("|") if x.strip())
+
     return f"""{emoji} <b>فرصت شغلی | {label}</b>
-{flag} {job.get("TITLE", "")}
- 
+{flag} {job.get("TITLE","")}
+
 ━━━━━━━━━━━━━━━━
 <b>💼 موقعیت</b>
-📍 {job.get("LOCATION", "")}
-🏢 {job.get("EMPLOYER", "")}
-📄 {job.get("CONTRACT", "")}
-🗓 شروع: {job.get("START", "")}
- 
+📍 {job.get("LOCATION","")}
+🏢 {job.get("EMPLOYER","")}
+📄 {job.get("CONTRACT","")}
+🗓 شروع: {job.get("START","")}
+
 <b>💰 حقوق و مزایا</b>
-💵 حقوق: {job.get("SALARY", "")}
-{bullet_list("BENEFITS")}
- 
+💵 حقوق: {job.get("SALARY","")}
+{bullets("BENEFITS")}
+
 <b>📋 شرایط</b>
-{bullet_list("REQUIREMENTS")}
- 
+{bullets("REQUIREMENTS")}
+
 <b>📁 مدارک لازم</b>
 {docs}
-━━━━━━━━━━━━━━━━{deadline}
-📩 برای ارسال رزومه با <b>مشاورین هما</b> تماس بگیرید{note}
- 
-#هما #فرصت_شغلی #{country_tag} #{label.replace("‌", "")}"""
- 
- 
+━━━━━━━━━━━━━━━━
+📩 برای ارسال رزومه با <b>مشاورین هما</b> تماس بگیرید
+
+#هما #فرصت_شغلی #{job.get("COUNTRY","").replace(" ","_")} #{label.replace("‌","")}"""
+
+
 def send_telegram(text: str) -> bool:
-    """ارسال به تلگرام"""
     r = requests.post(
         f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-        json={
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": text,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": True,
-        },
+        json={"chat_id": TELEGRAM_CHAT_ID, "text": text,
+              "parse_mode": "HTML", "disable_web_page_preview": True},
         timeout=10,
     )
     return r.json().get("ok", False)
- 
- 
+
+
+COUNTRY_MAP = {
+    "current job vacancies Romania": "romania",
+    "Azerbaijan Baku jobs": "azerbaijan",
+    "Oman Muscat job": "oman",
+}
+
+
 def main():
     print("🚀 هما — شروع جستجوی روزانه\n")
     all_jobs = []
- 
+
     for query in SEARCHES:
-        print(f"🔍 {query[:60]}...")
+        country = next((v for k, v in COUNTRY_MAP.items() if k in query), "")
+        print(f"🔍 جستجو: {query[:50]}...")
         try:
-            result = search_jobs_with_claude(query)
-            jobs = parse_jobs(result)
+            raw = search_jobs(query)
+            print(f"   📝 {len(raw)} کاراکتر پیدا شد")
+            formatted = format_jobs(raw, country)
+            jobs = parse_jobs(formatted)
             all_jobs.extend(jobs)
-            print(f"   ✅ {len(jobs)} شغل پیدا شد")
+            print(f"   ✅ {len(jobs)} شغل استخراج شد")
         except Exception as e:
             print(f"   ❌ خطا: {e}")
-        time.sleep(3)
- 
-    # حذف تکراری
+        time.sleep(5)
+
     seen, unique = set(), []
     for j in all_jobs:
-        key = j.get("TITLE", "") + j.get("LOCATION", "")
+        key = j.get("TITLE","") + j.get("EMPLOYER","")
         if key not in seen:
             seen.add(key)
             unique.append(j)
- 
-    print(f"\n📋 مجموع: {len(unique)} شغل منحصربه‌فرد\n")
- 
+
+    print(f"\n📋 مجموع: {len(unique)} شغل\n")
+
     sent = 0
     for job in unique:
-        msg = format_message(job)
-        if send_telegram(msg):
-            print(f"📤 ارسال: {job.get('TITLE', '')}")
+        if send_telegram(format_telegram(job)):
+            print(f"📤 {job.get('TITLE','')}")
             sent += 1
             time.sleep(1.5)
- 
+
     send_telegram(f"""📊 <b>گزارش روزانه هما</b>
- 
+
 ✅ {sent} فرصت شغلی معتبر امروز
 🌍 آذربایجان 🇦🇿 | رومانی 🇷🇴 | عمان 🇴🇲
- 
+
 #هما #گزارش_روزانه""")
- 
+
     print(f"\n✅ پایان — {sent} شغل ارسال شد")
- 
- 
+
+
 if __name__ == "__main__":
     main()
